@@ -1,3 +1,5 @@
+"""Copyright (c) 2026 Valentin Haase <feststoff_holz6t@icloud.com>."""
+
 from __future__ import annotations
 
 import json
