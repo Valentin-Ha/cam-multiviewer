@@ -1,0 +1,18 @@
+site_name: RTSP Multi Stream Viewer Docs
+site_description: Documentation for the RTSP Multi Stream Viewer desktop application.
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Tutorial:
+    - First Run: tutorials/first-run.md
+  - How-to:
+    - Common Operations: how-to/common-operations.md
+    - Maintenance and Debugging: how-to/maintenance-and-debugging.md
+  - Reference:
+    - Environment Variables: reference/environment-variables.md
+    - Settings Schema: reference/settings-schema.md
+    - Controls and UI: reference/controls-and-ui.md
+  - Explanation:
+    - Architecture: explanation/architecture.md
+    - Reconnect and Health Model: explanation/reconnect-health-model.md

@@ -56,10 +56,10 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout),
     ],
 )
-log = logging.getLogger("cctv-viewer")
+log = logging.getLogger("rtsp-viewer")
 log.addFilter(SecretsFilter())
 
-APP_TITLE = "CCTV Viewer"
+APP_TITLE = "RTSP Multi Stream Viewer"
 DEFAULT_NUM_CAMS = 16
 DEFAULT_ROWS = 3
 DEFAULT_COLS = 3
@@ -333,7 +333,7 @@ class AppSettings:
 
 
 class CameraTile:
-    def __init__(self, app: "CCTVApp", index: int):
+    def __init__(self, app: "RTSPViewerApp", index: int):
         self.app = app
         self.index = index
         self.channel = index + 1
@@ -739,7 +739,7 @@ class CameraTile:
 
 
 class SettingsDialog(tk.Toplevel):
-    def __init__(self, app: "CCTVApp"):
+    def __init__(self, app: "RTSPViewerApp"):
         super().__init__(app.root)
         self.app = app
         self.title("Viewer Settings")
@@ -833,7 +833,7 @@ class SettingsDialog(tk.Toplevel):
         self.app.restart_application()
 
 
-class CCTVApp:
+class RTSPViewerApp:
     def __init__(self):
         self.settings = AppSettings.from_sources()
         self.root = tk.Tk()
@@ -887,7 +887,7 @@ class CCTVApp:
         self.topbar.pack(side="top", fill="x")
         self.topbar.pack_propagate(False)
 
-        self.title_label = tk.Label(self.topbar, text="▣  CCTV", bg=PANEL, fg=TEXT, font=FONT_TITLE, padx=12)
+        self.title_label = tk.Label(self.topbar, text="▣  RTSP", bg=PANEL, fg=TEXT, font=FONT_TITLE, padx=12)
         self.title_label.pack(side="left")
 
         self.status_label = tk.Label(self.topbar, text="", bg=PANEL, fg=TEXT_DIM, font=FONT_UI, padx=8)
@@ -1342,7 +1342,7 @@ class CCTVApp:
 
 if __name__ == "__main__":
     try:
-        CCTVApp().run()
+        RTSPViewerApp().run()
     except Exception:
         log.exception("Application failed to start")
         raise
