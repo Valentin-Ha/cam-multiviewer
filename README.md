@@ -3,7 +3,7 @@
 A Python desktop multi-RTSP stream viewer built with Tkinter and VLC.
 
 It is designed for low-latency grid viewing, single-camera focus mode, and automatic reconnect behavior when RTSP streams fail.
-
+Documenation created with AI
 ## Features
 
 - Multi-camera grid view with paging
