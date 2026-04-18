@@ -158,6 +158,96 @@ class SettingsTests(unittest.TestCase):
                 RTSP_viewer.SETTINGS_PATH = original_settings_path
                 RTSP_viewer.ENV_PATH = original_env_path
 
+    def test_from_sources_defaults_port_to_standard_rtsp(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "missing_settings.json"
+            original_path = RTSP_viewer.SETTINGS_PATH
+            try:
+                RTSP_viewer.SETTINGS_PATH = settings_path
+                with patch.dict(
+                    os.environ,
+                    {"UN": "env_user", "PW": "env_pass", "IP": "127.0.0.1", "PORT": ""},
+                    clear=False,
+                ):
+                    loaded = RTSP_viewer.AppSettings.from_sources()
+                    self.assertEqual(loaded.port, RTSP_viewer.DEFAULT_RTSP_PORT)
+                    self.assertEqual(loaded.port, "554")
+            finally:
+                RTSP_viewer.SETTINGS_PATH = original_path
+
+    def test_from_sources_malformed_numeric_settings_fall_back_to_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "ip": "127.0.0.1",
+                        "port": "8554",
+                        "num_cams": "not-a-number",
+                        "rows": "bad",
+                        "cols": "bad",
+                        "ui_hide_ms": "bad",
+                        "reconnect_delay_ms": "bad",
+                        "max_reconnect_attempts": "bad",
+                        "offline_retry_ms": "bad",
+                        "start_fullscreen": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_path = RTSP_viewer.SETTINGS_PATH
+            try:
+                RTSP_viewer.SETTINGS_PATH = settings_path
+                with patch.dict(
+                    os.environ,
+                    {"UN": "env_user", "PW": "env_pass", "IP": "127.0.0.1", "PORT": "8554"},
+                    clear=False,
+                ):
+                    loaded = RTSP_viewer.AppSettings.from_sources()
+                    self.assertEqual(loaded.num_cams, RTSP_viewer.DEFAULT_NUM_CAMS)
+                    self.assertEqual(loaded.rows, RTSP_viewer.DEFAULT_ROWS)
+                    self.assertEqual(loaded.cols, RTSP_viewer.DEFAULT_COLS)
+                    self.assertEqual(loaded.ui_hide_ms, RTSP_viewer.DEFAULT_UI_HIDE_MS)
+                    self.assertEqual(loaded.reconnect_delay_ms, RTSP_viewer.DEFAULT_RECONNECT_DELAY_MS)
+                    self.assertEqual(loaded.max_reconnect_attempts, RTSP_viewer.DEFAULT_MAX_RECONNECT_ATTEMPTS)
+                    self.assertEqual(loaded.offline_retry_ms, RTSP_viewer.DEFAULT_OFFLINE_RETRY_MS)
+            finally:
+                RTSP_viewer.SETTINGS_PATH = original_path
+
+    def test_launch_restart_process_uses_expected_command_and_cwd(self):
+        args = (
+            r"C:\bundle\CCTV-Viewer.exe",
+            "--demo",
+        )
+        with patch("RTSP_viewer.subprocess.Popen") as popen:
+            RTSP_viewer.launch_restart_process(args, cwd=Path(r"C:\bundle"))
+            popen.assert_called_once_with(
+                [r"C:\bundle\CCTV-Viewer.exe", "--demo"],
+                cwd=r"C:\bundle",
+                close_fds=True,
+            )
+
+    def test_restart_application_launches_and_exits(self):
+        class DummyApp:
+            def __init__(self):
+                self.closed = False
+                self.root = None
+
+            def close(self):
+                self.closed = True
+
+        app = DummyApp()
+        restart_args = (r"C:\bundle\CCTV-Viewer.exe", "--demo")
+
+        with patch("RTSP_viewer.build_restart_argv", return_value=restart_args):
+            with patch("RTSP_viewer.launch_restart_process") as launcher:
+                with patch("RTSP_viewer.sys.exit") as exit_mock:
+                    RTSP_viewer.CCTVApp.restart_application(app)
+                    launcher.assert_called_once_with(restart_args)
+                    self.assertTrue(app.closed)
+                    exit_mock.assert_called_once_with(0)
+
 
 if __name__ == "__main__":
     unittest.main()

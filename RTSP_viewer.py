@@ -6,6 +6,7 @@ import math
 import os
 import random
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -51,6 +52,15 @@ def build_restart_argv(
     return (executable, str(Path(script_path or __file__).resolve()), *extra_args)
 
 
+def launch_restart_process(args: tuple[str, ...], cwd: Path | None = None) -> None:
+    launch_cwd = cwd or resolve_runtime_base_dir()
+    subprocess.Popen(
+        list(args),
+        cwd=str(launch_cwd),
+        close_fds=True,
+    )
+
+
 BASE_DIR = resolve_runtime_base_dir()
 SETTINGS_PATH = BASE_DIR / "settings.json"
 ENV_PATH = BASE_DIR / ".env"
@@ -88,6 +98,7 @@ log = logging.getLogger("cctv-viewer")
 log.addFilter(SecretsFilter())
 
 APP_TITLE = "CCTV Viewer"
+DEFAULT_RTSP_PORT = "554"
 DEFAULT_NUM_CAMS = 16
 DEFAULT_ROWS = 3
 DEFAULT_COLS = 3
@@ -256,7 +267,7 @@ class AppSettings:
             "username": "",
             "password": "",
             "ip": "",
-            "port": "8554",
+            "port": DEFAULT_RTSP_PORT,
             "num_cams": DEFAULT_NUM_CAMS,
             "rows": DEFAULT_ROWS,
             "cols": DEFAULT_COLS,
@@ -291,12 +302,16 @@ class AppSettings:
         data["username"] = os.getenv("UN", "").strip()
         data["password"] = os.getenv("PW", "")
         data["ip"] = os.getenv("IP", str(data.get("ip", "")).strip())
-        data["port"] = os.getenv("PORT", str(data.get("port", "8554")).strip())
+        env_port = os.getenv("PORT")
+        if env_port is not None and env_port.strip():
+            data["port"] = env_port.strip()
+        else:
+            data["port"] = str(data.get("port", DEFAULT_RTSP_PORT)).strip()
 
         if not all([data["username"], data["password"], data["ip"], data["port"]]):
             bootstrap = cls.bootstrap_missing_config(
                 default_ip=str(data.get("ip", "")).strip(),
-                default_port=str(data.get("port", "8554")).strip(),
+                default_port=str(data.get("port", DEFAULT_RTSP_PORT)).strip(),
             )
             if bootstrap is not None:
                 data["username"] = bootstrap["username"]
@@ -304,20 +319,48 @@ class AppSettings:
                 data["ip"] = bootstrap["ip"]
                 data["port"] = bootstrap["port"]
 
-        data["num_cams"] = int(data.get("num_cams", DEFAULT_NUM_CAMS))
-        data["rows"] = int(data.get("rows", DEFAULT_ROWS))
-        data["cols"] = int(data.get("cols", DEFAULT_COLS))
-        data["ui_hide_ms"] = int(data.get("ui_hide_ms", DEFAULT_UI_HIDE_MS))
-        data["reconnect_delay_ms"] = int(data.get("reconnect_delay_ms", DEFAULT_RECONNECT_DELAY_MS))
-        data["max_reconnect_attempts"] = int(data.get("max_reconnect_attempts", DEFAULT_MAX_RECONNECT_ATTEMPTS))
-        data["offline_retry_ms"] = int(data.get("offline_retry_ms", DEFAULT_OFFLINE_RETRY_MS))
+        repaired = False
+        data["num_cams"], changed = cls._coerce_int_setting("num_cams", data.get("num_cams"), DEFAULT_NUM_CAMS)
+        repaired = repaired or changed
+        data["rows"], changed = cls._coerce_int_setting("rows", data.get("rows"), DEFAULT_ROWS)
+        repaired = repaired or changed
+        data["cols"], changed = cls._coerce_int_setting("cols", data.get("cols"), DEFAULT_COLS)
+        repaired = repaired or changed
+        data["ui_hide_ms"], changed = cls._coerce_int_setting("ui_hide_ms", data.get("ui_hide_ms"), DEFAULT_UI_HIDE_MS)
+        repaired = repaired or changed
+        data["reconnect_delay_ms"], changed = cls._coerce_int_setting(
+            "reconnect_delay_ms",
+            data.get("reconnect_delay_ms"),
+            DEFAULT_RECONNECT_DELAY_MS,
+        )
+        repaired = repaired or changed
+        data["max_reconnect_attempts"], changed = cls._coerce_int_setting(
+            "max_reconnect_attempts",
+            data.get("max_reconnect_attempts"),
+            DEFAULT_MAX_RECONNECT_ATTEMPTS,
+        )
+        repaired = repaired or changed
+        data["offline_retry_ms"], changed = cls._coerce_int_setting(
+            "offline_retry_ms",
+            data.get("offline_retry_ms"),
+            DEFAULT_OFFLINE_RETRY_MS,
+        )
+        repaired = repaired or changed
         data["start_fullscreen"] = parse_bool(data.get("start_fullscreen", True), default=True)
 
         settings = cls(**data)
         settings.validate()
-        if not SETTINGS_PATH.exists():
+        if repaired or not SETTINGS_PATH.exists():
             settings.save()
         return settings
+
+    @staticmethod
+    def _coerce_int_setting(name: str, raw_value: object, default: int) -> tuple[int, bool]:
+        try:
+            return int(raw_value), False
+        except (TypeError, ValueError, OverflowError):
+            log.warning("Invalid settings value for %s=%r; using default %s", name, raw_value, default)
+            return default, True
 
     @staticmethod
     def _save_env_values(username: str, password: str, ip: str, port: str) -> None:
@@ -1430,9 +1473,19 @@ class CCTVApp:
         SettingsDialog(self)
 
     def restart_application(self) -> None:
-        self.close()
         restart_args = build_restart_argv()
-        os.execl(restart_args[0], *restart_args)
+        try:
+            launch_restart_process(restart_args)
+        except Exception:
+            log.exception("Failed to relaunch application")
+            messagebox.showerror(
+                "Restart Failed",
+                "Could not restart the application. Please relaunch it manually.",
+                parent=self.root,
+            )
+            return
+        self.close()
+        sys.exit(0)
 
     def on_escape(self, _event=None) -> None:
         if self.focused_index is not None:
