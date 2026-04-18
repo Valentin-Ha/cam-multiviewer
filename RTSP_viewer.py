@@ -15,13 +15,43 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 import vlc
 from dotenv import load_dotenv
 
 
-BASE_DIR = Path(__file__).resolve().parent
+def resolve_runtime_base_dir(
+    *,
+    frozen: bool | None = None,
+    executable_path: str | None = None,
+    script_path: str | None = None,
+) -> Path:
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        return Path(executable_path or sys.executable).resolve().parent
+    return Path(script_path or __file__).resolve().parent
+
+
+def build_restart_argv(
+    *,
+    frozen: bool | None = None,
+    executable_path: str | None = None,
+    script_path: str | None = None,
+    argv: list[str] | None = None,
+) -> tuple[str, ...]:
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    current_argv = list(sys.argv if argv is None else argv)
+    extra_args = tuple(current_argv[1:])
+    executable = str(Path(executable_path or sys.executable).resolve())
+    if frozen:
+        return (executable, *extra_args)
+    return (executable, str(Path(script_path or __file__).resolve()), *extra_args)
+
+
+BASE_DIR = resolve_runtime_base_dir()
 SETTINGS_PATH = BASE_DIR / "settings.json"
 ENV_PATH = BASE_DIR / ".env"
 LOG_DIR = BASE_DIR / "logs"
@@ -83,11 +113,11 @@ CARD = "#111821"
 CARD_HOVER = "#182230"
 BORDER = "#171f2b"
 BORDER_ACTIVE = "#28a8ff"
-TEXT = "#f4f7fb"
+TEXT = "#ffffff"
 TEXT_DIM = "#9ca3af"
-LIVE = "#22c55e"
+LIVE = "#ff2600"
 WARN = "#f59e0b"
-ERROR = "#ef4444"
+ERROR = "#FF5100"
 
 FONT_UI = ("Segoe UI", 10)
 FONT_TITLE = ("Segoe UI", 11, "bold")
@@ -263,6 +293,17 @@ class AppSettings:
         data["ip"] = os.getenv("IP", str(data.get("ip", "")).strip())
         data["port"] = os.getenv("PORT", str(data.get("port", "8554")).strip())
 
+        if not all([data["username"], data["password"], data["ip"], data["port"]]):
+            bootstrap = cls.bootstrap_missing_config(
+                default_ip=str(data.get("ip", "")).strip(),
+                default_port=str(data.get("port", "8554")).strip(),
+            )
+            if bootstrap is not None:
+                data["username"] = bootstrap["username"]
+                data["password"] = bootstrap["password"]
+                data["ip"] = bootstrap["ip"]
+                data["port"] = bootstrap["port"]
+
         data["num_cams"] = int(data.get("num_cams", DEFAULT_NUM_CAMS))
         data["rows"] = int(data.get("rows", DEFAULT_ROWS))
         data["cols"] = int(data.get("cols", DEFAULT_COLS))
@@ -277,6 +318,96 @@ class AppSettings:
         if not SETTINGS_PATH.exists():
             settings.save()
         return settings
+
+    @staticmethod
+    def _save_env_values(username: str, password: str, ip: str, port: str) -> None:
+        env_lines: list[str] = []
+        if ENV_PATH.exists():
+            env_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+
+        updates = {
+            "UN": username,
+            "PW": password,
+            "IP": ip,
+            "PORT": port,
+        }
+        seen: set[str] = set()
+        merged: list[str] = []
+
+        for line in env_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in line:
+                merged.append(line)
+                continue
+            key, _, _value = line.partition("=")
+            key = key.strip()
+            if key in updates:
+                merged.append(f"{key}={updates[key]}")
+                seen.add(key)
+            else:
+                merged.append(line)
+
+        for key, value in updates.items():
+            if key not in seen:
+                merged.append(f"{key}={value}")
+
+        ENV_PATH.write_text("\n".join(merged).rstrip() + "\n", encoding="utf-8")
+
+        os.environ["UN"] = username
+        os.environ["PW"] = password
+        os.environ["IP"] = ip
+        os.environ["PORT"] = port
+
+    @classmethod
+    def bootstrap_missing_config(cls, default_ip: str, default_port: str) -> dict[str, str] | None:
+        # If Tk cannot show dialogs (e.g. headless), keep existing behavior and fail validation.
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except Exception:
+            return None
+
+        try:
+            messagebox.showwarning(
+                "Missing Configuration",
+                "Credentials or connection settings are missing.\n"
+                "Enter values to continue. They will be saved to .env.",
+                parent=root,
+            )
+
+            username = simpledialog.askstring("Required", "Username (UN)", parent=root)
+            if username is None:
+                return None
+            password = simpledialog.askstring("Required", "Password (PW)", parent=root, show="*")
+            if password is None:
+                return None
+            ip = simpledialog.askstring("Required", "IP/Host (IP)", parent=root, initialvalue=default_ip)
+            if ip is None:
+                return None
+            port = simpledialog.askstring("Required", "Port (PORT)", parent=root, initialvalue=default_port)
+            if port is None:
+                return None
+
+            values = {
+                "username": username.strip(),
+                "password": password,
+                "ip": ip.strip(),
+                "port": port.strip(),
+            }
+
+            if not all(values.values()):
+                messagebox.showerror("Invalid Input", "All fields are required.", parent=root)
+                return None
+
+            cls._save_env_values(
+                username=values["username"],
+                password=values["password"],
+                ip=values["ip"],
+                port=values["port"],
+            )
+            return values
+        finally:
+            root.destroy()
 
     @classmethod
     def from_form(cls, data: dict[str, object]) -> "AppSettings":
@@ -528,8 +659,6 @@ class CameraTile:
         self.last_start_time = time.monotonic()
         self.last_frame_progress_time = self.last_start_time
         self.last_video_counter = -1
-        if force:
-            self.retry_attempts = 0
         self.apply_audio_policy()
         self.set_status("CONNECTING", BORDER_ACTIVE if hd else TEXT_DIM)
         log.info("Camera %s started in %s mode", self.channel, self.active_mode)
@@ -576,8 +705,6 @@ class CameraTile:
 
     def restart_current_stream(self, force: bool = False) -> None:
         self.cancel_reconnect()
-        if force:
-            self.retry_attempts = 0
         if self.active_mode == "focus":
             self.start_focus_stream(force=True)
         else:
@@ -694,7 +821,6 @@ class CameraTile:
             if state in (vlc.State.Opening, vlc.State.Buffering) or (playing or state == vlc.State.Playing):
                 self.set_status("BUFFERING", BORDER_ACTIVE)
             else:
-                # Paused can happen transiently; keep waiting while frames recently progressed.
                 self.set_status("CONNECTING", TEXT_DIM)
 
             if stalled_for >= FRAME_STALL_SECONDS:
@@ -1305,7 +1431,8 @@ class CCTVApp:
 
     def restart_application(self) -> None:
         self.close()
-        os.execl(sys.executable, sys.executable, str(Path(__file__).resolve()))
+        restart_args = build_restart_argv()
+        os.execl(restart_args[0], *restart_args)
 
     def on_escape(self, _event=None) -> None:
         if self.focused_index is not None:
@@ -1341,6 +1468,13 @@ class CCTVApp:
 if __name__ == "__main__":
     try:
         CCTVApp().run()
-    except Exception:
+    except Exception as exc:
         log.exception("Application failed to start")
-        raise
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Startup Error", str(exc), parent=root)
+            root.destroy()
+        except Exception:
+            pass
+        sys.exit(1)
