@@ -8,6 +8,7 @@ import math
 import os
 import random
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -17,13 +18,52 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 import vlc
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 
-BASE_DIR = Path(__file__).resolve().parent
+def resolve_runtime_base_dir(
+    *,
+    frozen: bool | None = None,
+    executable_path: str | None = None,
+    script_path: str | None = None,
+) -> Path:
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    if frozen:
+        return Path(executable_path or sys.executable).resolve().parent
+    return Path(script_path or __file__).resolve().parent
+
+
+def build_restart_argv(
+    *,
+    frozen: bool | None = None,
+    executable_path: str | None = None,
+    script_path: str | None = None,
+    argv: list[str] | None = None,
+) -> tuple[str, ...]:
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    current_argv = list(sys.argv if argv is None else argv)
+    extra_args = tuple(current_argv[1:])
+    executable = str(Path(executable_path or sys.executable).resolve())
+    if frozen:
+        return (executable, *extra_args)
+    return (executable, str(Path(script_path or __file__).resolve()), *extra_args)
+
+
+def launch_restart_process(args: tuple[str, ...], cwd: Path | None = None) -> None:
+    launch_cwd = cwd or resolve_runtime_base_dir()
+    subprocess.Popen(
+        list(args),
+        cwd=str(launch_cwd),
+        close_fds=True,
+    )
+
+
+BASE_DIR = resolve_runtime_base_dir()
 SETTINGS_PATH = BASE_DIR / "settings.json"
 ENV_PATH = BASE_DIR / ".env"
 LOG_DIR = BASE_DIR / "logs"
@@ -59,7 +99,8 @@ logging.basicConfig(
 log = logging.getLogger("rtsp-viewer")
 log.addFilter(SecretsFilter())
 
-APP_TITLE = "RTSP Multi Stream Viewer"
+APP_TITLE = "CCTV Viewer"
+DEFAULT_RTSP_PORT = "554"
 DEFAULT_NUM_CAMS = 16
 DEFAULT_ROWS = 3
 DEFAULT_COLS = 3
@@ -67,9 +108,9 @@ DEFAULT_UI_HIDE_MS = 2000
 DEFAULT_RECONNECT_DELAY_MS = 2500
 DEFAULT_MAX_RECONNECT_ATTEMPTS = 4
 DEFAULT_OFFLINE_RETRY_MS = 60000
+DEFAULT_RTSP_SCHEME = "rtsp"
 MAX_RECONNECT_DELAY_MS = 30000
 RECONNECT_JITTER_MAX_MS = 1000
-RTSP_SCHEME = os.getenv("RTSP_SCHEME", "rtsp").strip().lower()
 FRAME_STALL_SECONDS = 10.0
 DRIFT_THRESHOLD_MS = 2500
 DRIFT_MIN_SAMPLES = 3
@@ -79,17 +120,17 @@ DRIFT_RESYNC_COOLDOWN_SECONDS = 30.0
 GRID_SUBTYPE = 1
 FOCUS_SUBTYPE = 0
 
-BG = "#05070b"
+BG = "#000000"
 PANEL = "#0c1016"
 CARD = "#111821"
 CARD_HOVER = "#182230"
 BORDER = "#171f2b"
 BORDER_ACTIVE = "#28a8ff"
-TEXT = "#f4f7fb"
+TEXT = "#ffffff"
 TEXT_DIM = "#9ca3af"
-LIVE = "#22c55e"
+LIVE = "#ff2600"
 WARN = "#f59e0b"
-ERROR = "#ef4444"
+ERROR = "#FF5100"
 
 FONT_UI = ("Segoe UI", 10)
 FONT_TITLE = ("Segoe UI", 11, "bold")
@@ -123,7 +164,7 @@ def create_vlc_instance(quality: str) -> vlc.Instance:
 
 def rtsp_url(settings: "AppSettings", channel: int, subtype: int) -> str:
     # Credentials are required by RTSP auth; never log this URL directly.
-    scheme = "rtsps" if RTSP_SCHEME == "rtsps" else "rtsp"
+    scheme = "rtsps" if settings.rtsp_scheme == "rtsps" else "rtsp"
     return (
         f"{scheme}://{settings.username}:{settings.password}@{settings.ip}:{settings.port}"
         f"/cam/realmonitor?channel={channel}&subtype={subtype}"
@@ -212,6 +253,7 @@ class AppSettings:
     reconnect_delay_ms: int = DEFAULT_RECONNECT_DELAY_MS
     max_reconnect_attempts: int = DEFAULT_MAX_RECONNECT_ATTEMPTS
     offline_retry_ms: int = DEFAULT_OFFLINE_RETRY_MS
+    rtsp_scheme: str = DEFAULT_RTSP_SCHEME
     start_fullscreen: bool = True
 
     @property
@@ -228,7 +270,7 @@ class AppSettings:
             "username": "",
             "password": "",
             "ip": "",
-            "port": "8554",
+            "port": DEFAULT_RTSP_PORT,
             "num_cams": DEFAULT_NUM_CAMS,
             "rows": DEFAULT_ROWS,
             "cols": DEFAULT_COLS,
@@ -236,6 +278,7 @@ class AppSettings:
             "reconnect_delay_ms": DEFAULT_RECONNECT_DELAY_MS,
             "max_reconnect_attempts": DEFAULT_MAX_RECONNECT_ATTEMPTS,
             "offline_retry_ms": DEFAULT_OFFLINE_RETRY_MS,
+            "rtsp_scheme": DEFAULT_RTSP_SCHEME,
             "start_fullscreen": True,
         }
 
@@ -244,8 +287,6 @@ class AppSettings:
                 stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
                 if isinstance(stored, dict):
                     for key in (
-                        "ip",
-                        "port",
                         "num_cams",
                         "rows",
                         "cols",
@@ -253,6 +294,7 @@ class AppSettings:
                         "reconnect_delay_ms",
                         "max_reconnect_attempts",
                         "offline_retry_ms",
+                        "rtsp_scheme",
                         "start_fullscreen",
                     ):
                         if key in stored:
@@ -263,32 +305,181 @@ class AppSettings:
         data["username"] = os.getenv("UN", "").strip()
         data["password"] = os.getenv("PW", "")
         data["ip"] = os.getenv("IP", str(data.get("ip", "")).strip())
-        data["port"] = os.getenv("PORT", str(data.get("port", "8554")).strip())
+        env_port = os.getenv("PORT")
+        if env_port is not None and env_port.strip():
+            data["port"] = env_port.strip()
+        else:
+            data["port"] = str(data.get("port", DEFAULT_RTSP_PORT)).strip()
+        env_scheme = os.getenv("RTSP_SCHEME")
+        if env_scheme is not None and env_scheme.strip():
+            data["rtsp_scheme"] = env_scheme.strip()
 
-        data["num_cams"] = int(data.get("num_cams", DEFAULT_NUM_CAMS))
-        data["rows"] = int(data.get("rows", DEFAULT_ROWS))
-        data["cols"] = int(data.get("cols", DEFAULT_COLS))
-        data["ui_hide_ms"] = int(data.get("ui_hide_ms", DEFAULT_UI_HIDE_MS))
-        data["reconnect_delay_ms"] = int(data.get("reconnect_delay_ms", DEFAULT_RECONNECT_DELAY_MS))
-        data["max_reconnect_attempts"] = int(data.get("max_reconnect_attempts", DEFAULT_MAX_RECONNECT_ATTEMPTS))
-        data["offline_retry_ms"] = int(data.get("offline_retry_ms", DEFAULT_OFFLINE_RETRY_MS))
+        repaired = False
+        data["num_cams"], changed = cls._coerce_int_setting(
+            "num_cams",
+            data.get("num_cams"),
+            DEFAULT_NUM_CAMS,
+            min_value=1,
+        )
+        repaired = repaired or changed
+        data["rows"], changed = cls._coerce_int_setting(
+            "rows",
+            data.get("rows"),
+            DEFAULT_ROWS,
+            min_value=1,
+        )
+        repaired = repaired or changed
+        data["cols"], changed = cls._coerce_int_setting(
+            "cols",
+            data.get("cols"),
+            DEFAULT_COLS,
+            min_value=1,
+        )
+        repaired = repaired or changed
+        data["ui_hide_ms"], changed = cls._coerce_int_setting(
+            "ui_hide_ms",
+            data.get("ui_hide_ms"),
+            DEFAULT_UI_HIDE_MS,
+            min_value=250,
+        )
+        repaired = repaired or changed
+        data["reconnect_delay_ms"], changed = cls._coerce_int_setting(
+            "reconnect_delay_ms",
+            data.get("reconnect_delay_ms"),
+            DEFAULT_RECONNECT_DELAY_MS,
+            min_value=250,
+        )
+        repaired = repaired or changed
+        data["max_reconnect_attempts"], changed = cls._coerce_int_setting(
+            "max_reconnect_attempts",
+            data.get("max_reconnect_attempts"),
+            DEFAULT_MAX_RECONNECT_ATTEMPTS,
+            min_value=1,
+        )
+        repaired = repaired or changed
+        data["offline_retry_ms"], changed = cls._coerce_int_setting(
+            "offline_retry_ms",
+            data.get("offline_retry_ms"),
+            DEFAULT_OFFLINE_RETRY_MS,
+            min_value=1000,
+        )
+        repaired = repaired or changed
+        data["rtsp_scheme"], changed = cls._coerce_rtsp_scheme(
+            data.get("rtsp_scheme"),
+            default=DEFAULT_RTSP_SCHEME,
+        )
+        repaired = repaired or changed
         data["start_fullscreen"] = parse_bool(data.get("start_fullscreen", True), default=True)
 
         settings = cls(**data)
-        settings.validate()
-        if not SETTINGS_PATH.exists():
+        settings.validate_ui_settings()
+        if repaired or not SETTINGS_PATH.exists():
             settings.save()
         return settings
+
+    @staticmethod
+    def _coerce_int_setting(
+        name: str,
+        raw_value: object,
+        default: int,
+        *,
+        min_value: int | None = None,
+    ) -> tuple[int, bool]:
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError, OverflowError):
+            log.warning("Invalid settings value for %s=%r; using default %s", name, raw_value, default)
+            return default, True
+        if min_value is not None and value < min_value:
+            log.warning("Invalid settings value for %s=%r; using default %s", name, raw_value, default)
+            return default, True
+        return value, False
+
+    @staticmethod
+    def _coerce_rtsp_scheme(raw_value: object, default: str) -> tuple[str, bool]:
+        candidate = str(raw_value).strip().lower() if raw_value is not None else ""
+        if candidate in {"rtsp", "rtsps"}:
+            return candidate, False
+        log.warning("Invalid settings value for rtsp_scheme=%r; using default %s", raw_value, default)
+        return default, True
+
+    @staticmethod
+    def _save_env_values(username: str, password: str, ip: str, port: str) -> None:
+        updates = {
+            "UN": username,
+            "PW": password,
+            "IP": ip,
+            "PORT": port,
+        }
+        for key, value in updates.items():
+            set_key(str(ENV_PATH), key, value, quote_mode="auto")
+
+        os.environ["UN"] = username
+        os.environ["PW"] = password
+        os.environ["IP"] = ip
+        os.environ["PORT"] = port
+
+    @classmethod
+    def bootstrap_missing_config(cls, default_ip: str, default_port: str) -> dict[str, str] | None:
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except Exception:
+            return None
+
+        try:
+            messagebox.showwarning(
+                "Missing Configuration",
+                "Credentials or connection settings are missing.\n"
+                "Enter values to continue. They will be saved to .env.",
+                parent=root,
+            )
+
+            username = simpledialog.askstring("Required", "Username (UN)", parent=root)
+            if username is None:
+                return None
+            password = simpledialog.askstring("Required", "Password (PW)", parent=root, show="*")
+            if password is None:
+                return None
+            ip = simpledialog.askstring("Required", "IP/Host (IP)", parent=root, initialvalue=default_ip)
+            if ip is None:
+                return None
+            port = simpledialog.askstring("Required", "Port (PORT)", parent=root, initialvalue=default_port)
+            if port is None:
+                return None
+
+            values = {
+                "username": username.strip(),
+                "password": password,
+                "ip": ip.strip(),
+                "port": port.strip(),
+            }
+
+            if not all(values.values()):
+                messagebox.showerror("Invalid Input", "All fields are required.", parent=root)
+                return None
+
+            cls._save_env_values(
+                username=values["username"],
+                password=values["password"],
+                ip=values["ip"],
+                port=values["port"],
+            )
+            return values
+        finally:
+            root.destroy()
 
     @classmethod
     def from_form(cls, data: dict[str, object]) -> "AppSettings":
         username = os.getenv("UN", "").strip()
         password = os.getenv("PW", "")
+        ip = os.getenv("IP", "").strip()
+        port = os.getenv("PORT", "").strip()
         settings = cls(
             username=username,
             password=password,
-            ip=str(data["ip"]).strip(),
-            port=str(data["port"]).strip(),
+            ip=ip,
+            port=port if port else DEFAULT_RTSP_PORT,
             num_cams=int(data["num_cams"]),
             rows=int(data["rows"]),
             cols=int(data["cols"]),
@@ -296,22 +487,13 @@ class AppSettings:
             reconnect_delay_ms=int(data["reconnect_delay_ms"]),
             max_reconnect_attempts=int(data["max_reconnect_attempts"]),
             offline_retry_ms=int(data.get("offline_retry_ms", DEFAULT_OFFLINE_RETRY_MS)),
+            rtsp_scheme=cls._coerce_rtsp_scheme(data.get("rtsp_scheme", DEFAULT_RTSP_SCHEME), default=DEFAULT_RTSP_SCHEME)[0],
             start_fullscreen=parse_bool(data["start_fullscreen"], default=True),
         )
-        settings.validate()
+        settings.validate_ui_settings()
         return settings
 
-    def validate(self) -> None:
-        if not all([self.username, self.password, self.ip, self.port]):
-            raise RuntimeError("Missing UN, PW, IP, or PORT in your .env or environment")
-        self.ip = validate_host(self.ip)
-        try:
-            port_num = int(self.port)
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError("PORT must be a whole number") from exc
-        if not (1 <= port_num <= 65535):
-            raise RuntimeError("PORT must be between 1 and 65535")
-        self.port = str(port_num)
+    def validate_ui_settings(self) -> None:
         if self.num_cams < 1:
             raise RuntimeError("num_cams must be at least 1")
         if self.rows < 1 or self.cols < 1:
@@ -325,10 +507,64 @@ class AppSettings:
         if self.offline_retry_ms < 1000:
             raise RuntimeError("offline_retry_ms must be at least 1000")
 
+    def validate_connection_settings(self) -> None:
+        if not all([self.username, self.password, self.ip, self.port]):
+            raise RuntimeError("Missing UN, PW, IP, or PORT in your .env or environment")
+        self.ip = validate_host(self.ip)
+        try:
+            port_num = int(self.port)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("PORT must be a whole number") from exc
+        if not (1 <= port_num <= 65535):
+            raise RuntimeError("PORT must be between 1 and 65535")
+        self.port = str(port_num)
+
+    def validate(self) -> None:
+        self.validate_ui_settings()
+        self.validate_connection_settings()
+
+    def connection_fields_requiring_input(self) -> list[str]:
+        fields: list[str] = []
+        if not self.username.strip():
+            fields.append("UN")
+        if not self.password:
+            fields.append("PW")
+
+        host = self.ip.strip()
+        if not host:
+            fields.append("IP")
+        else:
+            try:
+                validate_host(host)
+            except RuntimeError:
+                fields.append("IP")
+
+        raw_port = str(self.port).strip()
+        if not raw_port:
+            fields.append("PORT")
+        else:
+            try:
+                port_num = int(raw_port)
+            except (TypeError, ValueError):
+                fields.append("PORT")
+            else:
+                if not (1 <= port_num <= 65535):
+                    fields.append("PORT")
+        return fields
+
+    def has_valid_connection(self) -> bool:
+        try:
+            self.validate_connection_settings()
+            return True
+        except RuntimeError:
+            return False
+
     def save(self) -> None:
         payload = asdict(self)
         payload.pop("username", None)
         payload.pop("password", None)
+        payload.pop("ip", None)
+        payload.pop("port", None)
         atomic_write_json(SETTINGS_PATH, payload)
 
 
@@ -530,8 +766,6 @@ class CameraTile:
         self.last_start_time = time.monotonic()
         self.last_frame_progress_time = self.last_start_time
         self.last_video_counter = -1
-        if force:
-            self.retry_attempts = 0
         self.apply_audio_policy()
         self.set_status("CONNECTING", BORDER_ACTIVE if hd else TEXT_DIM)
         log.info("Camera %s started in %s mode", self.channel, self.active_mode)
@@ -578,8 +812,6 @@ class CameraTile:
 
     def restart_current_stream(self, force: bool = False) -> None:
         self.cancel_reconnect()
-        if force:
-            self.retry_attempts = 0
         if self.active_mode == "focus":
             self.start_focus_stream(force=True)
         else:
@@ -696,7 +928,6 @@ class CameraTile:
             if state in (vlc.State.Opening, vlc.State.Buffering) or (playing or state == vlc.State.Playing):
                 self.set_status("BUFFERING", BORDER_ACTIVE)
             else:
-                # Paused can happen transiently; keep waiting while frames recently progressed.
                 self.set_status("CONNECTING", TEXT_DIM)
 
             if stalled_for >= FRAME_STALL_SECONDS:
@@ -738,6 +969,113 @@ class CameraTile:
         self.set_status("IDLE", TEXT_DIM)
 
 
+class ConnectionSettingsDialog(tk.Toplevel):
+    """Dialog for editing connection credentials and settings stored in .env file."""
+
+    def __init__(self, app: "RTSPViewerApp", parent: tk.Widget | None = None):
+        super().__init__(app.root if parent is None else parent)
+        self.app = app
+        self.title("Connection Settings")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        if parent:
+            self.transient(parent)
+        self.grab_set()
+
+        self.vars = {
+            "username": tk.StringVar(value=os.getenv("UN", "")),
+            "password": tk.StringVar(value=os.getenv("PW", "")),
+            "ip": tk.StringVar(value=os.getenv("IP", "")),
+            "port": tk.StringVar(value=os.getenv("PORT", "")),
+        }
+
+        self._build_form()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _row(self, parent: tk.Widget, row: int, label: str, widget: tk.Widget) -> None:
+        tk.Label(parent, text=label, bg=BG, fg=TEXT, font=FONT_UI).grid(row=row, column=0, sticky="w", padx=8, pady=5)
+        widget.grid(row=row, column=1, sticky="ew", padx=8, pady=5)
+
+    def _build_form(self) -> None:
+        outer = tk.Frame(self, bg=BG, padx=12, pady=12)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(1, weight=1)
+
+        title = tk.Label(outer, text="RTSP Connection & Credentials", bg=BG, fg=TEXT, font=FONT_TITLE)
+        title.grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 12))
+
+        self._row(outer, 1, "Username (UN)", tk.Entry(outer, textvariable=self.vars["username"], width=32))
+        self._row(outer, 2, "Password (PW)", tk.Entry(outer, textvariable=self.vars["password"], width=32, show="*"))
+        self._row(outer, 3, "IP Address (IP)", tk.Entry(outer, textvariable=self.vars["ip"], width=32))
+        self._row(outer, 4, "Port (PORT)", tk.Entry(outer, textvariable=self.vars["port"], width=32))
+
+        hint = tk.Label(
+            outer,
+            text="These settings are saved to the .env file and take effect immediately after saving.",
+            bg=BG,
+            fg=TEXT_DIM,
+            font=FONT_SMALL,
+            wraplength=420,
+            justify="left",
+        )
+        hint.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(12, 10))
+
+        actions = tk.Frame(outer, bg=BG)
+        actions.grid(row=6, column=0, columnspan=2, sticky="e", padx=8)
+
+        save_button = tk.Label(actions, text="Save & Restart", bg=PANEL, fg=BORDER_ACTIVE, padx=12, pady=6, cursor="hand2")
+        save_button.pack(side="left", padx=(0, 8))
+        save_button.bind("<Button-1>", lambda _event: self.save_and_exit())
+
+        cancel_button = tk.Label(actions, text="CANCEL", bg=PANEL, fg=TEXT_DIM, padx=12, pady=6, cursor="hand2")
+        cancel_button.pack(side="left")
+        cancel_button.bind("<Button-1>", lambda _event: self.destroy())
+
+    def save_and_exit(self) -> None:
+        username = self.vars["username"].get().strip()
+        password = self.vars["password"].get()
+        ip = self.vars["ip"].get().strip()
+        port = self.vars["port"].get().strip()
+
+        if not all([username, password, ip, port]):
+            messagebox.showerror("Invalid Input", "All fields (Username, Password, IP, Port) are required.", parent=self)
+            return
+
+        try:
+            validate_host(ip)
+        except Exception as exc:
+            messagebox.showerror("Invalid IP/Host", str(exc), parent=self)
+            return
+
+        try:
+            port_num = int(port)
+        except (TypeError, ValueError):
+            messagebox.showerror("Invalid Port", "Port must be a whole number.", parent=self)
+            return
+
+        if not (1 <= port_num <= 65535):
+            messagebox.showerror("Invalid Port", "Port must be between 1 and 65535.", parent=self)
+            return
+
+        try:
+            AppSettings._save_env_values(
+                username=username,
+                password=password,
+                ip=ip,
+                port=port,
+            )
+            log.info("Connection settings saved to .env")
+            messagebox.showinfo(
+                "Settings Saved",
+                "Connection settings have been saved to .env.\nThe application will restart to apply these changes.",
+                parent=self,
+            )
+            self.destroy()
+            self.app.restart_application()
+        except Exception as exc:
+            messagebox.showerror("Save Failed", f"Could not save connection settings: {exc}", parent=self)
+
+
 class SettingsDialog(tk.Toplevel):
     def __init__(self, app: "RTSPViewerApp"):
         super().__init__(app.root)
@@ -750,8 +1088,6 @@ class SettingsDialog(tk.Toplevel):
 
         settings = app.settings
         self.vars = {
-            "ip": tk.StringVar(value=settings.ip),
-            "port": tk.StringVar(value=settings.port),
             "num_cams": tk.StringVar(value=str(settings.num_cams)),
             "rows": tk.StringVar(value=str(settings.rows)),
             "cols": tk.StringVar(value=str(settings.cols)),
@@ -759,6 +1095,7 @@ class SettingsDialog(tk.Toplevel):
             "reconnect_delay_ms": tk.StringVar(value=str(settings.reconnect_delay_ms)),
             "max_reconnect_attempts": tk.StringVar(value=str(settings.max_reconnect_attempts)),
             "offline_retry_ms": tk.StringVar(value=str(settings.offline_retry_ms)),
+            "rtsp_scheme": tk.StringVar(value=settings.rtsp_scheme),
             "start_fullscreen": tk.BooleanVar(value=settings.start_fullscreen),
         }
 
@@ -777,15 +1114,37 @@ class SettingsDialog(tk.Toplevel):
         title = tk.Label(outer, text="Connection and Layout", bg=BG, fg=TEXT, font=FONT_TITLE)
         title.grid(row=0, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
 
-        self._row(outer, 1, "IP Address", tk.Entry(outer, textvariable=self.vars["ip"], width=32))
-        self._row(outer, 2, "Port", tk.Entry(outer, textvariable=self.vars["port"], width=32))
-        self._row(outer, 3, "Camera Count", tk.Entry(outer, textvariable=self.vars["num_cams"], width=32))
-        self._row(outer, 4, "Rows", tk.Entry(outer, textvariable=self.vars["rows"], width=32))
-        self._row(outer, 5, "Columns", tk.Entry(outer, textvariable=self.vars["cols"], width=32))
-        self._row(outer, 6, "UI Hide (ms)", tk.Entry(outer, textvariable=self.vars["ui_hide_ms"], width=32))
-        self._row(outer, 7, "Reconnect Delay (ms)", tk.Entry(outer, textvariable=self.vars["reconnect_delay_ms"], width=32))
-        self._row(outer, 8, "Max Retries", tk.Entry(outer, textvariable=self.vars["max_reconnect_attempts"], width=32))
-        self._row(outer, 9, "Offline Retry (ms)", tk.Entry(outer, textvariable=self.vars["offline_retry_ms"], width=32))
+        self._row(outer, 1, "Camera Count", tk.Entry(outer, textvariable=self.vars["num_cams"], width=32))
+        self._row(outer, 2, "Rows", tk.Entry(outer, textvariable=self.vars["rows"], width=32))
+        self._row(outer, 3, "Columns", tk.Entry(outer, textvariable=self.vars["cols"], width=32))
+        self._row(outer, 4, "UI Hide (ms)", tk.Entry(outer, textvariable=self.vars["ui_hide_ms"], width=32))
+        self._row(outer, 5, "Reconnect Delay (ms)", tk.Entry(outer, textvariable=self.vars["reconnect_delay_ms"], width=32))
+        self._row(outer, 6, "Max Retries", tk.Entry(outer, textvariable=self.vars["max_reconnect_attempts"], width=32))
+        self._row(outer, 7, "Offline Retry (ms)", tk.Entry(outer, textvariable=self.vars["offline_retry_ms"], width=32))
+        protocol_row = tk.Frame(outer, bg=BG)
+        tk.Radiobutton(
+            protocol_row,
+            text="RTSP",
+            value="rtsp",
+            variable=self.vars["rtsp_scheme"],
+            bg=BG,
+            fg=TEXT,
+            activebackground=BG,
+            activeforeground=TEXT,
+            selectcolor=BG,
+        ).pack(side="left")
+        tk.Radiobutton(
+            protocol_row,
+            text="RTSPS",
+            value="rtsps",
+            variable=self.vars["rtsp_scheme"],
+            bg=BG,
+            fg=TEXT,
+            activebackground=BG,
+            activeforeground=TEXT,
+            selectcolor=BG,
+        ).pack(side="left", padx=(10, 0))
+        self._row(outer, 8, "RTSP Protocol", protocol_row)
 
         fullscreen_row = tk.Checkbutton(
             outer,
@@ -797,11 +1156,15 @@ class SettingsDialog(tk.Toplevel):
             activeforeground=TEXT,
             selectcolor=BG,
         )
-        fullscreen_row.grid(row=10, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 10))
+        fullscreen_row.grid(row=9, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 10))
+
+        connection_button = tk.Label(outer, text="EDIT CONNECTION SETTINGS", bg=PANEL, fg=BORDER_ACTIVE, padx=12, pady=6, cursor="hand2")
+        connection_button.grid(row=10, column=0, columnspan=2, sticky="e", padx=8, pady=(0, 10))
+        connection_button.bind("<Button-1>", lambda _event: self.open_connection_settings())
 
         hint = tk.Label(
             outer,
-            text="Credentials are read from UN/PW environment variables or .env only. Settings are saved to settings.json and applied on restart.",
+            text="Layout settings and RTSP protocol are saved to settings.json and applied on restart. Connection settings (IP/Port/Credentials) are managed separately.",
             bg=BG,
             fg=TEXT_DIM,
             font=FONT_SMALL,
@@ -813,24 +1176,35 @@ class SettingsDialog(tk.Toplevel):
         actions = tk.Frame(outer, bg=BG)
         actions.grid(row=12, column=0, columnspan=2, sticky="e", padx=8)
 
-        save_button = tk.Label(actions, text="SAVE & EXIT", bg=PANEL, fg=BORDER_ACTIVE, padx=12, pady=6, cursor="hand2")
+        save_button = tk.Label(actions, text="Save & Restart", bg=PANEL, fg=BORDER_ACTIVE, padx=12, pady=6, cursor="hand2")
         save_button.pack(side="left", padx=(0, 8))
-        save_button.bind("<Button-1>", lambda _event: self.save_and_exit())
+        save_button.bind("<Button-1>", lambda _event: self.save_and_restart())
 
         cancel_button = tk.Label(actions, text="CANCEL", bg=PANEL, fg=TEXT_DIM, padx=12, pady=6, cursor="hand2")
         cancel_button.pack(side="left")
         cancel_button.bind("<Button-1>", lambda _event: self.destroy())
 
-    def save_and_exit(self) -> None:
-        try:
-            new_settings = AppSettings.from_form({key: var.get() for key, var in self.vars.items()})
-            new_settings.save()
-        except Exception as exc:
-            messagebox.showerror("Invalid Settings", str(exc), parent=self)
+    def save_and_restart(self) -> None:
+        if not self.persist_pending_settings(show_error=True):
             return
 
         self.destroy()
         self.app.restart_application()
+
+    def persist_pending_settings(self, *, show_error: bool) -> bool:
+        try:
+            new_settings = AppSettings.from_form({key: var.get() for key, var in self.vars.items()})
+            new_settings.save()
+            self.app.settings = new_settings
+            return True
+        except Exception as exc:
+            if show_error:
+                messagebox.showerror("Invalid Settings", str(exc), parent=self)
+            return False
+
+    def open_connection_settings(self) -> None:
+        self.persist_pending_settings(show_error=False)
+        ConnectionSettingsDialog(self.app, parent=self)
 
 
 class RTSPViewerApp:
@@ -843,6 +1217,7 @@ class RTSPViewerApp:
         self.root.configure(bg=BG)
 
         self.fullscreen = self.settings.start_fullscreen
+        self.connection_ready = self.settings.has_valid_connection()
         self.focused_index: int | None = None
         self.switching = False
         self.page = 0
@@ -869,7 +1244,10 @@ class RTSPViewerApp:
         self.bind_activity()
 
         self.root.attributes("-fullscreen", self.fullscreen)
-        self.show_page(0, start_streams=True)
+        self.update_quit_button_visibility()
+        self.show_page(0, start_streams=self.connection_ready)
+        if not self.connection_ready:
+            self.root.after(150, self.prompt_for_required_connection_fields)
         self.monitor_streams()
         self.tick_clock()
         self.report_metrics()
@@ -887,7 +1265,7 @@ class RTSPViewerApp:
         self.topbar.pack(side="top", fill="x")
         self.topbar.pack_propagate(False)
 
-        self.title_label = tk.Label(self.topbar, text="▣  RTSP", bg=PANEL, fg=TEXT, font=FONT_TITLE, padx=12)
+        self.title_label = tk.Label(self.topbar, text="CCTV Viewer", bg=PANEL, fg=TEXT, font=FONT_TITLE, padx=12)
         self.title_label.pack(side="left")
 
         self.status_label = tk.Label(self.topbar, text="", bg=PANEL, fg=TEXT_DIM, font=FONT_UI, padx=8)
@@ -895,6 +1273,11 @@ class RTSPViewerApp:
 
         self.page_label = tk.Label(self.topbar, text="", bg=PANEL, fg=TEXT_DIM, font=FONT_UI, padx=8)
         self.page_label.pack(side="left")
+
+        self.quit_button = tk.Label(self.topbar, text="QUIT", bg=PANEL, fg=TEXT_DIM, font=FONT_UI, padx=10, cursor="hand2")
+        self.quit_button.pack(side="right")
+        self.quit_button.bind("<Button-1>", lambda _event: self.close())
+        self.quit_button.pack_forget()
 
         self.settings_button = tk.Label(self.topbar, text="SETTINGS", bg=PANEL, fg=TEXT_DIM, font=FONT_UI, padx=10, cursor="hand2")
         self.settings_button.pack(side="right")
@@ -1011,6 +1394,82 @@ class RTSPViewerApp:
         enabled = bool(tile.audio_enabled) if tile is not None else False
         self.audio_button.config(text="SOUND ON" if enabled else "SOUND OFF", fg=TEXT if enabled else TEXT_DIM)
         self.audio_button.pack(side="right")
+
+    def update_quit_button_visibility(self) -> None:
+        if self.fullscreen:
+            self.quit_button.pack(side="right", before=self.settings_button)
+        else:
+            self.quit_button.pack_forget()
+
+    def prompt_for_required_connection_fields(self) -> None:
+        needed = self.settings.connection_fields_requiring_input()
+        if not needed:
+            if not self.connection_ready:
+                self.connection_ready = True
+                self.queue_start_tiles(self.visible_grid_indexes())
+            return
+
+        display_names = {
+            "UN": "Username (UN)",
+            "PW": "Password (PW)",
+            "IP": "IP/Host (IP)",
+            "PORT": "Port (PORT)",
+        }
+        env_values = {
+            "UN": os.getenv("UN", "").strip(),
+            "PW": os.getenv("PW", ""),
+            "IP": os.getenv("IP", "").strip(),
+            "PORT": os.getenv("PORT", "").strip(),
+        }
+
+        entered: dict[str, str] = {}
+        for key in needed:
+            prompt = f"Enter {display_names[key]}"
+            initial_value = env_values[key]
+            if key == "PW":
+                value = simpledialog.askstring("Missing Connection Setting", prompt, parent=self.root, show="*")
+            else:
+                value = simpledialog.askstring("Missing Connection Setting", prompt, parent=self.root, initialvalue=initial_value)
+            if value is None:
+                messagebox.showwarning(
+                    "Connection Not Configured",
+                    "Connection settings are incomplete. The app will stay open, but streams will not start.",
+                    parent=self.root,
+                )
+                return
+            entered[key] = value.strip() if key != "PW" else value
+
+        merged = {
+            "UN": entered.get("UN", env_values["UN"]),
+            "PW": entered.get("PW", env_values["PW"]),
+            "IP": entered.get("IP", env_values["IP"]),
+            "PORT": entered.get("PORT", env_values["PORT"]),
+        }
+
+        try:
+            AppSettings._save_env_values(
+                username=merged["UN"],
+                password=merged["PW"],
+                ip=merged["IP"],
+                port=merged["PORT"],
+            )
+            self.settings.username = merged["UN"]
+            self.settings.password = merged["PW"]
+            self.settings.ip = merged["IP"]
+            self.settings.port = merged["PORT"]
+            self.settings.validate_connection_settings()
+        except Exception as exc:
+            messagebox.showerror(
+                "Invalid Connection Settings",
+                f"{exc}\n\nPlease enter the missing or invalid values.",
+                parent=self.root,
+            )
+            self.root.after(10, self.prompt_for_required_connection_fields)
+            return
+
+        if not self.connection_ready:
+            self.connection_ready = True
+            self.queue_start_tiles(self.visible_grid_indexes())
 
     def clear_start_queue(self) -> None:
         self.start_sequence_token += 1
@@ -1162,6 +1621,7 @@ class RTSPViewerApp:
 
         focused_tile = self.tiles.get(focused)
         if focused_tile is not None:
+            focused_tile.set_audio_enabled(False)
             focused_tile.start_grid_stream(force=True)
 
         self.configure_grid_weights(focused=False)
@@ -1292,7 +1752,7 @@ class RTSPViewerApp:
     def show_help(self) -> None:
         messagebox.showinfo(
             "Keyboard Shortcuts",
-            "Esc: exit focus or close\n"
+            "Esc: exit focus\n"
             "F11: toggle fullscreen\n"
             "Left / Right: previous or next page\n"
             "M: toggle sound in focus view\n"
@@ -1306,18 +1766,28 @@ class RTSPViewerApp:
         SettingsDialog(self)
 
     def restart_application(self) -> None:
+        restart_args = build_restart_argv()
+        try:
+            launch_restart_process(restart_args)
+        except Exception:
+            log.exception("Failed to relaunch application")
+            messagebox.showerror(
+                "Restart Failed",
+                "Could not restart the application. Please relaunch it manually.",
+                parent=self.root,
+            )
+            return
         self.close()
-        os.execl(sys.executable, sys.executable, str(Path(__file__).resolve()))
+        sys.exit(0)
 
     def on_escape(self, _event=None) -> None:
         if self.focused_index is not None:
             self.exit_focus()
-        else:
-            self.close()
 
     def toggle_window_fullscreen(self, _event=None) -> None:
         self.fullscreen = not self.fullscreen
         self.root.attributes("-fullscreen", self.fullscreen)
+        self.update_quit_button_visibility()
 
     def close(self) -> None:
         if self.closing:
@@ -1343,6 +1813,13 @@ class RTSPViewerApp:
 if __name__ == "__main__":
     try:
         RTSPViewerApp().run()
-    except Exception:
+    except Exception as exc:
         log.exception("Application failed to start")
-        raise
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Startup Error", str(exc), parent=root)
+            root.destroy()
+        except Exception:
+            pass
+        sys.exit(1)
