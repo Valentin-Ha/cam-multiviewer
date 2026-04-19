@@ -1556,6 +1556,7 @@ class CCTVApp:
 
         focused_tile = self.tiles.get(focused)
         if focused_tile is not None:
+            focused_tile.set_audio_enabled(False)
             focused_tile.start_grid_stream(force=True)
 
         self.configure_grid_weights(focused=False)

@@ -21,7 +21,7 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             RTSP_viewer.validate_host("not a real host name !!!")
 
-    def test_atomic_save_excludes_secrets(self):
+    def test_atomic_save_excludes_sensitive_connection_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "settings.json"
             original_path = RTSP_viewer.SETTINGS_PATH
@@ -45,7 +45,8 @@ class SettingsTests(unittest.TestCase):
                 stored = json.loads(settings_path.read_text(encoding="utf-8"))
                 self.assertNotIn("username", stored)
                 self.assertNotIn("password", stored)
-                self.assertEqual(stored["ip"], "127.0.0.1")
+                self.assertNotIn("ip", stored)
+                self.assertNotIn("port", stored)
             finally:
                 RTSP_viewer.SETTINGS_PATH = original_path
 
@@ -111,7 +112,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(frozen_args[0], str(Path(r"C:\bundle\CCTV-Viewer.exe").resolve()))
         self.assertEqual(frozen_args[1:], ("--demo",))
 
-    def test_from_sources_bootstraps_missing_credentials(self):
+    def test_from_sources_leaves_missing_credentials_empty_without_bootstrap(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "settings.json"
             env_path = Path(temp_dir) / ".env"
@@ -139,21 +140,13 @@ class SettingsTests(unittest.TestCase):
                 RTSP_viewer.SETTINGS_PATH = settings_path
                 RTSP_viewer.ENV_PATH = env_path
                 with patch.dict(os.environ, {"UN": "", "PW": "", "IP": "", "PORT": ""}, clear=False):
-                    with patch.object(
-                        RTSP_viewer.AppSettings,
-                        "bootstrap_missing_config",
-                        return_value={
-                            "username": "boot_user",
-                            "password": "boot_pass",
-                            "ip": "127.0.0.1",
-                            "port": "8554",
-                        },
-                    ):
+                    with patch.object(RTSP_viewer.AppSettings, "bootstrap_missing_config") as bootstrap:
                         loaded = RTSP_viewer.AppSettings.from_sources()
-                        self.assertEqual(loaded.username, "boot_user")
-                        self.assertEqual(loaded.password, "boot_pass")
-                        self.assertEqual(loaded.ip, "127.0.0.1")
-                        self.assertEqual(loaded.port, "8554")
+                        self.assertEqual(loaded.username, "")
+                        self.assertEqual(loaded.password, "")
+                        self.assertEqual(loaded.ip, "")
+                        self.assertEqual(loaded.port, RTSP_viewer.DEFAULT_RTSP_PORT)
+                        bootstrap.assert_not_called()
             finally:
                 RTSP_viewer.SETTINGS_PATH = original_settings_path
                 RTSP_viewer.ENV_PATH = original_env_path
