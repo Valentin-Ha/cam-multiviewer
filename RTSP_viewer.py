@@ -106,9 +106,9 @@ DEFAULT_UI_HIDE_MS = 2000
 DEFAULT_RECONNECT_DELAY_MS = 2500
 DEFAULT_MAX_RECONNECT_ATTEMPTS = 4
 DEFAULT_OFFLINE_RETRY_MS = 60000
+DEFAULT_RTSP_SCHEME = "rtsp"
 MAX_RECONNECT_DELAY_MS = 30000
 RECONNECT_JITTER_MAX_MS = 1000
-RTSP_SCHEME = os.getenv("RTSP_SCHEME", "rtsp").strip().lower()
 FRAME_STALL_SECONDS = 10.0
 DRIFT_THRESHOLD_MS = 2500
 DRIFT_MIN_SAMPLES = 3
@@ -162,7 +162,7 @@ def create_vlc_instance(quality: str) -> vlc.Instance:
 
 def rtsp_url(settings: "AppSettings", channel: int, subtype: int) -> str:
     # Credentials are required by RTSP auth; never log this URL directly.
-    scheme = "rtsps" if RTSP_SCHEME == "rtsps" else "rtsp"
+    scheme = "rtsps" if settings.rtsp_scheme == "rtsps" else "rtsp"
     return (
         f"{scheme}://{settings.username}:{settings.password}@{settings.ip}:{settings.port}"
         f"/cam/realmonitor?channel={channel}&subtype={subtype}"
@@ -251,6 +251,7 @@ class AppSettings:
     reconnect_delay_ms: int = DEFAULT_RECONNECT_DELAY_MS
     max_reconnect_attempts: int = DEFAULT_MAX_RECONNECT_ATTEMPTS
     offline_retry_ms: int = DEFAULT_OFFLINE_RETRY_MS
+    rtsp_scheme: str = DEFAULT_RTSP_SCHEME
     start_fullscreen: bool = True
 
     @property
@@ -275,6 +276,7 @@ class AppSettings:
             "reconnect_delay_ms": DEFAULT_RECONNECT_DELAY_MS,
             "max_reconnect_attempts": DEFAULT_MAX_RECONNECT_ATTEMPTS,
             "offline_retry_ms": DEFAULT_OFFLINE_RETRY_MS,
+            "rtsp_scheme": DEFAULT_RTSP_SCHEME,
             "start_fullscreen": True,
         }
 
@@ -290,6 +292,7 @@ class AppSettings:
                         "reconnect_delay_ms",
                         "max_reconnect_attempts",
                         "offline_retry_ms",
+                        "rtsp_scheme",
                         "start_fullscreen",
                     ):
                         if key in stored:
@@ -305,6 +308,9 @@ class AppSettings:
             data["port"] = env_port.strip()
         else:
             data["port"] = str(data.get("port", DEFAULT_RTSP_PORT)).strip()
+        env_scheme = os.getenv("RTSP_SCHEME")
+        if env_scheme is not None and env_scheme.strip():
+            data["rtsp_scheme"] = env_scheme.strip()
 
         repaired = False
         data["num_cams"], changed = cls._coerce_int_setting(
@@ -356,6 +362,11 @@ class AppSettings:
             min_value=1000,
         )
         repaired = repaired or changed
+        data["rtsp_scheme"], changed = cls._coerce_rtsp_scheme(
+            data.get("rtsp_scheme"),
+            default=DEFAULT_RTSP_SCHEME,
+        )
+        repaired = repaired or changed
         data["start_fullscreen"] = parse_bool(data.get("start_fullscreen", True), default=True)
 
         settings = cls(**data)
@@ -383,6 +394,14 @@ class AppSettings:
         return value, False
 
     @staticmethod
+    def _coerce_rtsp_scheme(raw_value: object, default: str) -> tuple[str, bool]:
+        candidate = str(raw_value).strip().lower() if raw_value is not None else ""
+        if candidate in {"rtsp", "rtsps"}:
+            return candidate, False
+        log.warning("Invalid settings value for rtsp_scheme=%r; using default %s", raw_value, default)
+        return default, True
+
+    @staticmethod
     def _save_env_values(username: str, password: str, ip: str, port: str) -> None:
         updates = {
             "UN": username,
@@ -390,7 +409,6 @@ class AppSettings:
             "IP": ip,
             "PORT": port,
         }
-        # Use dotenv's writer so values are safely quoted/escaped and round-trip.
         for key, value in updates.items():
             set_key(str(ENV_PATH), key, value, quote_mode="auto")
 
@@ -467,6 +485,7 @@ class AppSettings:
             reconnect_delay_ms=int(data["reconnect_delay_ms"]),
             max_reconnect_attempts=int(data["max_reconnect_attempts"]),
             offline_retry_ms=int(data.get("offline_retry_ms", DEFAULT_OFFLINE_RETRY_MS)),
+            rtsp_scheme=cls._coerce_rtsp_scheme(data.get("rtsp_scheme", DEFAULT_RTSP_SCHEME), default=DEFAULT_RTSP_SCHEME)[0],
             start_fullscreen=parse_bool(data["start_fullscreen"], default=True),
         )
         settings.validate_ui_settings()
@@ -1074,6 +1093,7 @@ class SettingsDialog(tk.Toplevel):
             "reconnect_delay_ms": tk.StringVar(value=str(settings.reconnect_delay_ms)),
             "max_reconnect_attempts": tk.StringVar(value=str(settings.max_reconnect_attempts)),
             "offline_retry_ms": tk.StringVar(value=str(settings.offline_retry_ms)),
+            "rtsp_scheme": tk.StringVar(value=settings.rtsp_scheme),
             "start_fullscreen": tk.BooleanVar(value=settings.start_fullscreen),
         }
 
@@ -1099,6 +1119,30 @@ class SettingsDialog(tk.Toplevel):
         self._row(outer, 5, "Reconnect Delay (ms)", tk.Entry(outer, textvariable=self.vars["reconnect_delay_ms"], width=32))
         self._row(outer, 6, "Max Retries", tk.Entry(outer, textvariable=self.vars["max_reconnect_attempts"], width=32))
         self._row(outer, 7, "Offline Retry (ms)", tk.Entry(outer, textvariable=self.vars["offline_retry_ms"], width=32))
+        protocol_row = tk.Frame(outer, bg=BG)
+        tk.Radiobutton(
+            protocol_row,
+            text="RTSP",
+            value="rtsp",
+            variable=self.vars["rtsp_scheme"],
+            bg=BG,
+            fg=TEXT,
+            activebackground=BG,
+            activeforeground=TEXT,
+            selectcolor=BG,
+        ).pack(side="left")
+        tk.Radiobutton(
+            protocol_row,
+            text="RTSPS",
+            value="rtsps",
+            variable=self.vars["rtsp_scheme"],
+            bg=BG,
+            fg=TEXT,
+            activebackground=BG,
+            activeforeground=TEXT,
+            selectcolor=BG,
+        ).pack(side="left", padx=(10, 0))
+        self._row(outer, 8, "RTSP Protocol", protocol_row)
 
         fullscreen_row = tk.Checkbutton(
             outer,
@@ -1110,25 +1154,25 @@ class SettingsDialog(tk.Toplevel):
             activeforeground=TEXT,
             selectcolor=BG,
         )
-        fullscreen_row.grid(row=8, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 10))
+        fullscreen_row.grid(row=9, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 10))
 
         connection_button = tk.Label(outer, text="EDIT CONNECTION SETTINGS", bg=PANEL, fg=BORDER_ACTIVE, padx=12, pady=6, cursor="hand2")
-        connection_button.grid(row=9, column=0, columnspan=2, sticky="e", padx=8, pady=(0, 10))
+        connection_button.grid(row=10, column=0, columnspan=2, sticky="e", padx=8, pady=(0, 10))
         connection_button.bind("<Button-1>", lambda _event: self.open_connection_settings())
 
         hint = tk.Label(
             outer,
-            text="Layout settings are saved to settings.json and applied on restart. Connection settings (IP/Port/Credentials) are managed separately.",
+            text="Layout settings and RTSP protocol are saved to settings.json and applied on restart. Connection settings (IP/Port/Credentials) are managed separately.",
             bg=BG,
             fg=TEXT_DIM,
             font=FONT_SMALL,
             wraplength=420,
             justify="left",
         )
-        hint.grid(row=10, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 10))
+        hint.grid(row=11, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 10))
 
         actions = tk.Frame(outer, bg=BG)
-        actions.grid(row=11, column=0, columnspan=2, sticky="e", padx=8)
+        actions.grid(row=12, column=0, columnspan=2, sticky="e", padx=8)
 
         save_button = tk.Label(actions, text="Save & Restart", bg=PANEL, fg=BORDER_ACTIVE, padx=12, pady=6, cursor="hand2")
         save_button.pack(side="left", padx=(0, 8))
@@ -1157,7 +1201,6 @@ class SettingsDialog(tk.Toplevel):
             return False
 
     def open_connection_settings(self) -> None:
-        # Preserve any valid, unsaved UI edits before launching connection save/restart flow.
         self.persist_pending_settings(show_error=False)
         ConnectionSettingsDialog(self.app, parent=self)
 
@@ -1220,7 +1263,7 @@ class CCTVApp:
         self.topbar.pack(side="top", fill="x")
         self.topbar.pack_propagate(False)
 
-        self.title_label = tk.Label(self.topbar, text="▣  CCTV", bg=PANEL, fg=TEXT, font=FONT_TITLE, padx=12)
+        self.title_label = tk.Label(self.topbar, text="CCTV Viewer", bg=PANEL, fg=TEXT, font=FONT_TITLE, padx=12)
         self.title_label.pack(side="left")
 
         self.status_label = tk.Label(self.topbar, text="", bg=PANEL, fg=TEXT_DIM, font=FONT_UI, padx=8)
