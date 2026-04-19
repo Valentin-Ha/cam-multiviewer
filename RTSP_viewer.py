@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 
 import vlc
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 
 def resolve_runtime_base_dir(
@@ -307,30 +307,53 @@ class AppSettings:
             data["port"] = str(data.get("port", DEFAULT_RTSP_PORT)).strip()
 
         repaired = False
-        data["num_cams"], changed = cls._coerce_int_setting("num_cams", data.get("num_cams"), DEFAULT_NUM_CAMS)
+        data["num_cams"], changed = cls._coerce_int_setting(
+            "num_cams",
+            data.get("num_cams"),
+            DEFAULT_NUM_CAMS,
+            min_value=1,
+        )
         repaired = repaired or changed
-        data["rows"], changed = cls._coerce_int_setting("rows", data.get("rows"), DEFAULT_ROWS)
+        data["rows"], changed = cls._coerce_int_setting(
+            "rows",
+            data.get("rows"),
+            DEFAULT_ROWS,
+            min_value=1,
+        )
         repaired = repaired or changed
-        data["cols"], changed = cls._coerce_int_setting("cols", data.get("cols"), DEFAULT_COLS)
+        data["cols"], changed = cls._coerce_int_setting(
+            "cols",
+            data.get("cols"),
+            DEFAULT_COLS,
+            min_value=1,
+        )
         repaired = repaired or changed
-        data["ui_hide_ms"], changed = cls._coerce_int_setting("ui_hide_ms", data.get("ui_hide_ms"), DEFAULT_UI_HIDE_MS)
+        data["ui_hide_ms"], changed = cls._coerce_int_setting(
+            "ui_hide_ms",
+            data.get("ui_hide_ms"),
+            DEFAULT_UI_HIDE_MS,
+            min_value=250,
+        )
         repaired = repaired or changed
         data["reconnect_delay_ms"], changed = cls._coerce_int_setting(
             "reconnect_delay_ms",
             data.get("reconnect_delay_ms"),
             DEFAULT_RECONNECT_DELAY_MS,
+            min_value=250,
         )
         repaired = repaired or changed
         data["max_reconnect_attempts"], changed = cls._coerce_int_setting(
             "max_reconnect_attempts",
             data.get("max_reconnect_attempts"),
             DEFAULT_MAX_RECONNECT_ATTEMPTS,
+            min_value=1,
         )
         repaired = repaired or changed
         data["offline_retry_ms"], changed = cls._coerce_int_setting(
             "offline_retry_ms",
             data.get("offline_retry_ms"),
             DEFAULT_OFFLINE_RETRY_MS,
+            min_value=1000,
         )
         repaired = repaired or changed
         data["start_fullscreen"] = parse_bool(data.get("start_fullscreen", True), default=True)
@@ -342,46 +365,34 @@ class AppSettings:
         return settings
 
     @staticmethod
-    def _coerce_int_setting(name: str, raw_value: object, default: int) -> tuple[int, bool]:
+    def _coerce_int_setting(
+        name: str,
+        raw_value: object,
+        default: int,
+        *,
+        min_value: int | None = None,
+    ) -> tuple[int, bool]:
         try:
-            return int(raw_value), False
+            value = int(raw_value)
         except (TypeError, ValueError, OverflowError):
             log.warning("Invalid settings value for %s=%r; using default %s", name, raw_value, default)
             return default, True
+        if min_value is not None and value < min_value:
+            log.warning("Invalid settings value for %s=%r; using default %s", name, raw_value, default)
+            return default, True
+        return value, False
 
     @staticmethod
     def _save_env_values(username: str, password: str, ip: str, port: str) -> None:
-        env_lines: list[str] = []
-        if ENV_PATH.exists():
-            env_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
-
         updates = {
             "UN": username,
             "PW": password,
             "IP": ip,
             "PORT": port,
         }
-        seen: set[str] = set()
-        merged: list[str] = []
-
-        for line in env_lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in line:
-                merged.append(line)
-                continue
-            key, _, _value = line.partition("=")
-            key = key.strip()
-            if key in updates:
-                merged.append(f"{key}={updates[key]}")
-                seen.add(key)
-            else:
-                merged.append(line)
-
+        # Use dotenv's writer so values are safely quoted/escaped and round-trip.
         for key, value in updates.items():
-            if key not in seen:
-                merged.append(f"{key}={value}")
-
-        ENV_PATH.write_text("\n".join(merged).rstrip() + "\n", encoding="utf-8")
+            set_key(str(ENV_PATH), key, value, quote_mode="auto")
 
         os.environ["UN"] = username
         os.environ["PW"] = password

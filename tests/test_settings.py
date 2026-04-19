@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import RTSP_viewer
+from dotenv import dotenv_values
 
 
 class SettingsTests(unittest.TestCase):
@@ -207,6 +208,75 @@ class SettingsTests(unittest.TestCase):
                     self.assertEqual(loaded.offline_retry_ms, RTSP_viewer.DEFAULT_OFFLINE_RETRY_MS)
             finally:
                 RTSP_viewer.SETTINGS_PATH = original_path
+
+    def test_from_sources_num_cams_below_one_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "num_cams": 0,
+                        "rows": 3,
+                        "cols": 3,
+                        "ui_hide_ms": 2000,
+                        "reconnect_delay_ms": 2500,
+                        "max_reconnect_attempts": 4,
+                        "offline_retry_ms": 60000,
+                        "start_fullscreen": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_path = RTSP_viewer.SETTINGS_PATH
+            try:
+                RTSP_viewer.SETTINGS_PATH = settings_path
+                with patch.dict(
+                    os.environ,
+                    {"UN": "env_user", "PW": "env_pass", "IP": "127.0.0.1", "PORT": "8554"},
+                    clear=False,
+                ):
+                    loaded = RTSP_viewer.AppSettings.from_sources()
+                    self.assertEqual(loaded.num_cams, RTSP_viewer.DEFAULT_NUM_CAMS)
+            finally:
+                RTSP_viewer.SETTINGS_PATH = original_path
+
+    def test_save_env_values_round_trip_special_characters(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            original_env_path = RTSP_viewer.ENV_PATH
+            try:
+                RTSP_viewer.ENV_PATH = env_path
+                RTSP_viewer.AppSettings._save_env_values(
+                    username="admin",
+                    password=" pass #123=ok",
+                    ip="127.0.0.1",
+                    port="554",
+                )
+                parsed = dotenv_values(env_path)
+                self.assertEqual(parsed.get("UN"), "admin")
+                self.assertEqual(parsed.get("PW"), " pass #123=ok")
+                self.assertEqual(parsed.get("IP"), "127.0.0.1")
+                self.assertEqual(parsed.get("PORT"), "554")
+            finally:
+                RTSP_viewer.ENV_PATH = original_env_path
+
+    def test_save_env_values_round_trip_multiline_password(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            original_env_path = RTSP_viewer.ENV_PATH
+            try:
+                RTSP_viewer.ENV_PATH = env_path
+                RTSP_viewer.AppSettings._save_env_values(
+                    username="admin",
+                    password="line1\nline2",
+                    ip="127.0.0.1",
+                    port="554",
+                )
+                parsed = dotenv_values(env_path)
+                self.assertEqual(parsed.get("PW"), "line1\nline2")
+            finally:
+                RTSP_viewer.ENV_PATH = original_env_path
 
     def test_launch_restart_process_uses_expected_command_and_cwd(self):
         args = (
