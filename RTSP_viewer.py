@@ -1128,17 +1128,26 @@ class SettingsDialog(tk.Toplevel):
         cancel_button.bind("<Button-1>", lambda _event: self.destroy())
 
     def save_and_restart(self) -> None:
-        try:
-            new_settings = AppSettings.from_form({key: var.get() for key, var in self.vars.items()})
-            new_settings.save()
-        except Exception as exc:
-            messagebox.showerror("Invalid Settings", str(exc), parent=self)
+        if not self.persist_pending_settings(show_error=True):
             return
 
         self.destroy()
         self.app.restart_application()
 
+    def persist_pending_settings(self, *, show_error: bool) -> bool:
+        try:
+            new_settings = AppSettings.from_form({key: var.get() for key, var in self.vars.items()})
+            new_settings.save()
+            self.app.settings = new_settings
+            return True
+        except Exception as exc:
+            if show_error:
+                messagebox.showerror("Invalid Settings", str(exc), parent=self)
+            return False
+
     def open_connection_settings(self) -> None:
+        # Preserve any valid, unsaved UI edits before launching connection save/restart flow.
+        self.persist_pending_settings(show_error=False)
         ConnectionSettingsDialog(self.app, parent=self)
 
 

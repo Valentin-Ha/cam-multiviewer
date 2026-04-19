@@ -241,6 +241,48 @@ class SettingsTests(unittest.TestCase):
                     self.assertTrue(app.closed)
                     exit_mock.assert_called_once_with(0)
 
+    def test_open_connection_settings_persists_pending_ui_edits(self):
+        class DummyVar:
+            def __init__(self, value):
+                self._value = value
+
+            def get(self):
+                return self._value
+
+        class DummyApp:
+            def __init__(self):
+                self.settings = None
+
+        class SavedSettings:
+            def __init__(self):
+                self.saved = False
+
+            def save(self):
+                self.saved = True
+
+        dialog = RTSP_viewer.SettingsDialog.__new__(RTSP_viewer.SettingsDialog)
+        dialog.app = DummyApp()
+        dialog.vars = {
+            "num_cams": DummyVar("9"),
+            "rows": DummyVar("3"),
+            "cols": DummyVar("3"),
+            "ui_hide_ms": DummyVar("1500"),
+            "reconnect_delay_ms": DummyVar("500"),
+            "max_reconnect_attempts": DummyVar("5"),
+            "offline_retry_ms": DummyVar("60000"),
+            "start_fullscreen": DummyVar(True),
+        }
+
+        saved_settings = SavedSettings()
+        with patch("RTSP_viewer.AppSettings.from_form", return_value=saved_settings) as from_form:
+            with patch("RTSP_viewer.ConnectionSettingsDialog") as connection_dialog:
+                RTSP_viewer.SettingsDialog.open_connection_settings(dialog)
+
+        from_form.assert_called_once()
+        self.assertTrue(saved_settings.saved)
+        self.assertIs(dialog.app.settings, saved_settings)
+        connection_dialog.assert_called_once_with(dialog.app, parent=dialog)
+
 
 if __name__ == "__main__":
     unittest.main()
