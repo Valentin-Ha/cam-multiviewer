@@ -1,9 +1,8 @@
-# RTSP Multi Stream Viewer
+# RTSP Viewer
 
-A Python desktop multi-RTSP stream viewer built with Tkinter and VLC.
+RTSP Viewer is a Python desktop RTSP multi-stream viewer built with Tkinter and VLC.
 
 It is designed for low-latency grid viewing, single-camera focus mode, and automatic reconnect behavior when RTSP streams fail.
-Documenation created with AI
 ## Features
 
 - Multi-camera grid view with paging
@@ -12,6 +11,7 @@ Documenation created with AI
 - Offline retry mode after reconnect attempts are exhausted
 - Drift detection and auto-resync for lagging grid tiles
 - Runtime settings dialog with persisted non-secret configuration
+- Separate connection settings editor for credentials, host, and port
 - Rotating logs with credential masking
 
 ## Quick Start
@@ -38,10 +38,15 @@ Configuration is split by sensitivity:
 - Secrets in `.env`:
   - `UN`
   - `PW`
+- Connection endpoint in `.env`:
+  - `IP`
+  - `PORT`
 - Runtime settings in `settings.json`:
-  - `num_cams`, `rows`, `cols`, reconnect and UI timing values, fullscreen preference
+  - `num_cams`, `rows`, `cols`, reconnect and UI timing values, `rtsp_scheme`, fullscreen preference
 
 At startup, credentials are read from environment variables and `settings.json` is read for non-secret values.
+
+If required connection fields are missing or invalid, the app prompts for values and saves them to `.env`.
 
 ## Keyboard Shortcuts
 

@@ -7,7 +7,7 @@ Use one of these actions:
 - Press `S`
 - Click `SETTINGS` in the top bar
 
-Edit values, then click `SAVE & EXIT`. The app restarts to apply changes.
+Edit values, then click `Save & Restart`. The app restarts to apply changes.
 
 ## Move Between Camera Pages
 

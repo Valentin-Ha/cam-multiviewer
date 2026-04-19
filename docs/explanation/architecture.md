@@ -1,5 +1,7 @@
 # Explanation: Architecture
 
+This page describes the runtime architecture of RTSP Viewer.
+
 ## High-Level Structure
 
 The app is implemented in a single module with three main runtime layers:

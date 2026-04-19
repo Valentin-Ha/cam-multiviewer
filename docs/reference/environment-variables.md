@@ -9,7 +9,7 @@ Environment values are loaded from `.env` at startup.
 - `IP`: camera/NVR IP or hostname
 - `PORT`: RTSP port (1-65535)
 
-If any required value is missing, app startup fails with validation error.
+If any required value is missing or invalid, the app prompts for the missing fields and writes the values to `.env`.
 
 ## Optional
 

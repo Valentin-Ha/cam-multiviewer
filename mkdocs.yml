@@ -1,5 +1,5 @@
-site_name: RTSP Multi Stream Viewer Docs
-site_description: Documentation for the RTSP Multi Stream Viewer desktop application.
+site_name: RTSP Viewer Docs
+site_description: Documentation for the RTSP Viewer desktop RTSP multi-stream application.
 theme:
   name: mkdocs
 nav:

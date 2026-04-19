@@ -25,6 +25,9 @@
 - `offline_retry_ms` (int)
   - Minimum: 1000
   - Default: 60000
+- `rtsp_scheme` (string)
+  - Allowed: `rtsp`, `rtsps`
+  - Default: `rtsp`
 - `start_fullscreen` (bool)
   - Default: true
 
@@ -36,4 +39,4 @@
 ## Persistence Rules
 
 - Settings are saved atomically to reduce file corruption risk.
-- Secrets (`username`, `password`) are excluded from persisted payload.
+- Connection values (`username`, `password`, `ip`, `port`) are excluded from persisted payload.

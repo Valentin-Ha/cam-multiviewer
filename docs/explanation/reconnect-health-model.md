@@ -1,5 +1,7 @@
 # Explanation: Reconnect and Health Model
 
+This page explains how RTSP Viewer evaluates stream health and manages reconnect behavior.
+
 ## Why a Hybrid Health Signal
 
 VLC state flags alone can be misleading in live RTSP scenarios. The app therefore combines:

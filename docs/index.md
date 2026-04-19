@@ -1,6 +1,6 @@
-# RTSP Multi Stream Viewer Documentation
+# RTSP Viewer Documentation
 
-This documentation covers setup, operations, and internals of the RTSP Multi Stream Viewer application.
+This documentation covers setup, operations, and internals of the RTSP Viewer application (an RTSP multi-stream viewer).
 
 The structure follows Diataxis:
 

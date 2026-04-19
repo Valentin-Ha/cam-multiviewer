@@ -5,7 +5,7 @@
 - `SETTINGS`: opens settings dialog
 - `RETRY`: restarts visible streams
 - `?`: opens shortcut help
-- `ALL`: exits focus mode
+- `ALL`: exits focus mode (visible only in focus mode)
 - `SOUND ON/OFF`: toggles audio for focused tile
 
 ## Keyboard Shortcuts

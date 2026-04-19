@@ -28,6 +28,8 @@ Checklist:
 4. Check whether tile statuses cycle through `RECONNECT` and then `OFFLINE`.
 5. Review `logs/app.log` for connection or state errors.
 
+If values are missing or invalid, RTSP Viewer prompts for the required connection fields at runtime.
+
 ## Tune Reconnect Behavior
 
 Tune these keys in `settings.json`:

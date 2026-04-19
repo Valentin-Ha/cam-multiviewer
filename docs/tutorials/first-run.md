@@ -1,6 +1,6 @@
 # Tutorial: First Run
 
-This tutorial walks through launching RTSP Multi Stream Viewer for the first time.
+This tutorial walks through launching RTSP Viewer for the first time.
 
 ## Prerequisites
 
@@ -45,6 +45,7 @@ Defaults include:
 - `reconnect_delay_ms`: 2500
 - `max_reconnect_attempts`: 4
 - `offline_retry_ms`: 60000
+- `rtsp_scheme`: `rtsp`
 - `start_fullscreen`: true
 
 ## Step 4: Launch the App
@@ -59,6 +60,8 @@ At startup, the app:
 2. Loads `settings.json`
 3. Creates the initial page of tiles
 4. Starts streams in sequence to reduce startup spikes
+
+If required connection values (`UN`, `PW`, `IP`, `PORT`) are missing or invalid, the app prompts for the missing fields and writes them to `.env`.
 
 ## Step 5: Verify Healthy Operation
 
