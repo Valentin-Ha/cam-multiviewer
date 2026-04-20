@@ -22,7 +22,7 @@ The runtime is modularized under the `viewer/` package, with `RTSP_viewer.py` re
 2. Install dependencies:
 
 ```powershell
-pip install python-vlc python-dotenv
+pip install -r requirements.txt
 ```
 
 3. Ensure VLC media player is installed on the OS.
