@@ -3,6 +3,8 @@
 RTSP Viewer is a Python desktop RTSP multi-stream viewer built with Tkinter and VLC.
 
 It is designed for low-latency grid viewing, single-camera focus mode, and automatic reconnect behavior when RTSP streams fail.
+
+The runtime is modularized under the `viewer/` package, with `RTSP_viewer.py` retained as the launcher and compatibility facade.
 ## Features
 
 - Multi-camera grid view with paging
@@ -30,6 +32,18 @@ pip install python-vlc python-dotenv
 ```powershell
 python RTSP_viewer.py
 ```
+
+Note: `viewer/app.py` and other package modules are importable components, not standalone entry scripts.
+
+## Project Layout
+
+- `RTSP_viewer.py`: launcher and backward-compatible public surface for tests/tools
+- `viewer/core.py`: paths, logging setup, constants, restart helpers
+- `viewer/settings.py`: settings model, parsing, validation, persistence
+- `viewer/stream.py`: VLC wiring, camera tile lifecycle, reconnect/backoff logic
+- `viewer/ui.py`: settings and connection dialogs
+- `viewer/app.py`: main Tk application orchestration
+- `tests/`: reconnect and settings tests
 
 ## Configuration
 

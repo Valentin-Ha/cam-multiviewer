@@ -8,6 +8,16 @@ python -m unittest discover -s tests -p "test_*.py"
 
 This validates reconnect delay behavior and settings loading/saving invariants.
 
+## Run the Correct Entry Script
+
+Launch the app with:
+
+```powershell
+python RTSP_viewer.py
+```
+
+Do not run `viewer/app.py` or `viewer/__init__.py` directly. Those are package modules and may fail when executed as standalone scripts.
+
 ## Increase Log Detail
 
 Set in `.env`:
@@ -39,6 +49,8 @@ Tune these keys in `settings.json`:
 - `offline_retry_ms`
 
 Reconnect delay uses exponential growth with random jitter and a max cap.
+
+Reconnect implementation lives in `viewer/stream.py`; settings limits and parsing live in `viewer/settings.py`.
 
 ## Recover from Invalid Settings
 

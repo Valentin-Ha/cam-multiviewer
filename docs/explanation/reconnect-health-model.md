@@ -2,6 +2,11 @@
 
 This page explains how RTSP Viewer evaluates stream health and manages reconnect behavior.
 
+Implementation location after modularization:
+
+- reconnect timing and health checks: `viewer/stream.py`
+- reconnect settings values and validation: `viewer/settings.py`
+
 ## Why a Hybrid Health Signal
 
 VLC state flags alone can be misleading in live RTSP scenarios. The app therefore combines:

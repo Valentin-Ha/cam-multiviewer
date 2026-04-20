@@ -18,9 +18,16 @@ The structure follows Diataxis:
 
 ## Scope
 
-This project is currently implemented as a single Python entrypoint:
+This project is organized as a launcher plus modular runtime package:
 
-- `RTSP_viewer.py`
+- `RTSP_viewer.py` (launcher and compatibility facade)
+- `viewer/core.py` (constants, logging, runtime path helpers)
+- `viewer/settings.py` (settings/env parsing, validation, persistence)
+- `viewer/stream.py` (VLC stream and reconnect logic)
+- `viewer/ui.py` (Tk dialogs)
+- `viewer/app.py` (application orchestration)
+
+Run the app via `RTSP_viewer.py`.
 
 Tests are in:
 

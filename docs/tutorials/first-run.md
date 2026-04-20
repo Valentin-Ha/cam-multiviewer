@@ -54,6 +54,8 @@ Defaults include:
 python RTSP_viewer.py
 ```
 
+Use `RTSP_viewer.py` as the startup script. The `viewer/` package files are internal modules and should not be run directly.
+
 At startup, the app:
 
 1. Loads `.env` values
@@ -62,6 +64,16 @@ At startup, the app:
 4. Starts streams in sequence to reduce startup spikes
 
 If required connection values (`UN`, `PW`, `IP`, `PORT`) are missing or invalid, the app prompts for the missing fields and writes them to `.env`.
+
+## Runtime Modules (Optional)
+
+After startup, runtime responsibilities are split across:
+
+- `viewer/core.py` for constants/logging/runtime path helpers
+- `viewer/settings.py` for configuration loading and validation
+- `viewer/stream.py` for VLC stream/reconnect logic
+- `viewer/ui.py` for dialog UI
+- `viewer/app.py` for top-level app orchestration
 
 ## Step 5: Verify Healthy Operation
 
