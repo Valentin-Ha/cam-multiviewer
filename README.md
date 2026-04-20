@@ -50,7 +50,7 @@ If required connection fields are missing or invalid, the app prompts for values
 
 ## Keyboard Shortcuts
 
-- `Esc`: exit focus mode, or close app if already in grid mode
+- `Esc`: exit focus mode
 - `F11`: toggle fullscreen
 - `Left` / `Right`: previous or next page
 - `M`: toggle sound for focused tile
